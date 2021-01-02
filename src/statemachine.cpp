@@ -1,8 +1,10 @@
 #include "statemachine.h"
 #include "Arduino.h"
 
-StateMachine::StateMachine(std::function<void(DoorState, bool)> stateCallback)
+StateMachine::StateMachine(std::function<void(DoorState, bool)> stateCallback, int openCloseTimeTicks, int resetThresholdTicks)
     :callback(stateCallback)
+    ,openCloseTime(openCloseTimeTicks)
+    ,resetThreshold(resetThresholdTicks)
 {
 }
 
@@ -15,9 +17,13 @@ void StateMachine::operate(bool trigger, DoorState target, bool endSwitch){
     //Serial.println(endSwitch?" SM:endsw ": " SM:no endsw ");
 
     //first handle reset condition, valid in all states
-    if(endSwitch && currentMovementDuration>resetThreshold && state!=Closed ){
+    if(endSwitch && endSwitchDuration++ >= resetThreshold && state!=Closed ){
         changeState(Closed);
+        endSwitchDuration = resetThreshold;//prevent rollover
         return;
+    }
+    if(!endSwitch){
+        endSwitchDuration = 0;
     }
 
     switch(state){
@@ -29,45 +35,39 @@ void StateMachine::operate(bool trigger, DoorState target, bool endSwitch){
         break;
         case Closing:
             currentMovementDuration++;
-            if(endSwitch){
-                //handle endSwitch immediately for faster feedback
-                changeState(Closed);
-            }else if(trigger){
+            if(trigger){
                 changeState(StoppedClosing);
-            }else if(currentMovementDuration > openCloseTime){
+            }
+            else if(currentMovementDuration > openCloseTime){
                 //remove this elseif, if state change should be by endSwitch only
                 changeState(Closed);
             }
         break;
         case StoppedClosing:
-            if (trigger || target == DoorState::Open)
-            {
-                currentMovementDuration = openCloseTime - currentMovementDuration; //change counting direction, as next movement will be opposite dir
-                changeState(Opening);
+            if (trigger || target == DoorState::Open){
+                currentMovementDuration = openCloseTime - (openCloseTime-currentMovementDuration); //change counting direction, as next movement will be opposite dir
+                changeState(Opening, target == DoorState::Open);
             }
         break;
         case Closed:
             currentMovementDuration = 0;
-            if(trigger || target == DoorState::Open)
-            {
+            if(trigger || target == DoorState::Open){
                 changeState(Opening, target == DoorState::Open);
             }
         break;
         case Opening:
             currentMovementDuration++;
-            if(trigger)
-            {
+            if(trigger){
                 changeState(StoppedOpening);
             }
-            if(currentMovementDuration > openCloseTime)
-            {
+            else if(currentMovementDuration > openCloseTime){
                 changeState(Open);
             }
         break;
         case StoppedOpening:
             if(trigger || target == DoorState::Closed){
-                currentMovementDuration = openCloseTime - currentMovementDuration; //change counting direction, as next movement will be opposite dir
-                changeState(Closing);
+                currentMovementDuration = openCloseTime - (openCloseTime-currentMovementDuration); //change counting direction, as next movement will be opposite dir
+                changeState(Closing, target == DoorState::Closed);
             }
         break;
     }
@@ -78,6 +78,7 @@ void StateMachine::changeState(State target, bool activateOutput){
     //Serial.println(activateOutput?" SM:trigger ": " SM:no trigger ");
 
     state = target;
+    endSwitchDuration = 0;//reset so that we have a endswitch delay in each new state
     if(callback){
         callback(intToExtState.at(target), activateOutput);
     }

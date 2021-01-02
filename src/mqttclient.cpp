@@ -1,4 +1,7 @@
 #include "mqttclient.h"
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 MqttClient::MqttClient(std::function<void(char* topic, byte* payload, unsigned int length)> cmdCallback)
 {
@@ -27,6 +30,31 @@ void MqttClient::setupWifi() {
     //Serial.println("WiFi connected");
     //Serial.println("IP address: ");
     //Serial.println(WiFi.localIP());
+
+    initOta();
+}
+
+void MqttClient::initOta(){
+    ArduinoOTA.setHostname("torschalter");
+    ArduinoOTA.setPassword("tor");
+    ArduinoOTA.onStart([]() {
+        Serial.println("Start");
+        });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
 }
 
 void MqttClient::reconnect() {
@@ -36,7 +64,7 @@ void MqttClient::reconnect() {
         if (client.connect("Toreinfahrt")) {
             //Serial.println("connected");
             client.publish("Toreinfahrt/Status", "Undefined");
-            client.subscribe("Toreinfahrt/Target");
+            client.subscribe("Toreinfahrt/Target", 1);//qos "at least once"
         } else {
             //Serial.print("failed, rc=");
             //Serial.print(client.state());
@@ -52,21 +80,14 @@ void MqttClient::operate(){
         reconnect();
     }
     client.loop();
+    ArduinoOTA.handle();
 
-    //every 2 sec
-    //send status changes only
+    //every 0.5 sec
     unsigned long now = millis();
-    if (now - lastMsg > 2000) {
+    if (now - lastMsg > 500) {
         lastMsg = now;
-        if(status != sentStatus){
-            client.publish("Toreinfahrt/Status", status.c_str());
-            sentStatus = status;
-        }
-        if(targetFeedback != sentTargetFeedback){
-            client.publish("Toreinfahrt/TargetFeedback", targetFeedback.c_str());
-            sentTargetFeedback = targetFeedback;
-        }
-        client.publish("Toreinfahrt/Heartbeat", "1");
+        client.publish("Toreinfahrt/Status", status.c_str());
+        client.publish("Toreinfahrt/TargetFeedback", targetFeedback.c_str());
     }
 }
 

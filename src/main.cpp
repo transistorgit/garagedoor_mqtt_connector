@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "statemachine.h"
 #include "mqttclient.h"
+#include "filteredbutton.h"
 
 #define RADIOPIN 0  //in, must be held high at boot
 #define BUTTONPIN 2 //in/out, must be held high at boot
@@ -13,8 +14,8 @@ DoorState keyCmd {DoorState::Undefined};
 //use the button input pin as an output to overwrite trigger
 void executeStateCmd(DoorState state, bool activateOutput){
     if(activateOutput){
-        Serial.print("StateCmd ");
-        Serial.println(StateStrings.at(state).c_str());
+        //Serial.print("StateCmd ");
+        //Serial.println(StateStrings.at(state).c_str());
     }
 
     if(activateOutput)
@@ -34,23 +35,27 @@ StateMachine sm = StateMachine(executeStateCmd);
 //callback from mqtt receiver. translates cmd String into DoorState Target
 void translateMqttCmd(std::string cmd){
     mqttCmd = DoorState::Undefined;
-    auto findResult = std::find_if(std::begin(StateStrings), std::end(StateStrings), [cmd](const std::pair<DoorState,std::string>& s)
+    auto findResult = std::find_if(std::begin(MqttStateStrings), std::end(MqttStateStrings), [cmd](const std::pair<DoorState,std::string>& s)
     {
         return s.second == cmd;
     });
-    if(findResult != StateStrings.end())
+    if(findResult != MqttStateStrings.end())
     {
         mqttCmd = findResult->first;
+        //char buf[20];
+        //std::sprintf(buf, "%d", mqttCmd);
+        //Serial.print(buf);
+        //Serial.println();
     } 
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     std::string topicStr {topic};
     if(topicStr.compare("Toreinfahrt/Target")==0){
-        Serial.print("Target ");
+        //Serial.print("Target ");
         auto cmd = std::string(reinterpret_cast<const char*>(payload), length);
-        Serial.print(cmd.c_str());
-        Serial.println();
+        //Serial.print(cmd.c_str());
+        //Serial.println();
         translateMqttCmd(cmd);
     }    
 }
@@ -67,8 +72,6 @@ void setup() {
 
 void loop() {
     static long lastMsg = 0;
-    static bool triggerState=false;
-
     mqttClient->operate();
 
     //call state machine each 100ms
@@ -80,23 +83,21 @@ void loop() {
         bool triggerByRadio = !digitalRead(RADIOPIN);//remote controller triggers high level, but we have a inverter in place (because pin must be high at boot)
         bool triggerByButton = !digitalRead(BUTTONPIN);//button triggers by pulling low
         bool limitSwitchHit = !digitalRead(LIMITPIN);//reed triggers by pulling low
+        static FilteredButton input;
 
-        if(!triggerState && !triggerByRadio && !triggerByButton){
-            triggerState = false;
-            sm.operate(false, mqttCmd , limitSwitchHit);
-        }else if(!triggerState && (triggerByRadio || triggerByButton)){
-            triggerState = true;
-            sm.operate(true, mqttCmd , limitSwitchHit);
-        }else if(triggerState && (triggerByRadio || triggerByButton)){
-            triggerState = true;
-            sm.operate(false, mqttCmd , limitSwitchHit);
-        }else if(triggerState && !triggerByRadio && !triggerByButton){
-            triggerState = false;
-            sm.operate(false, mqttCmd , limitSwitchHit);
-        }
+        sm.operate(input.isOn(triggerByButton || triggerByRadio), mqttCmd, limitSwitchHit);
 
         mqttClient->setStatus(StateStrings.at(sm.getState()));
         mqttClient->setTarget(StateStrings.at(sm.getTarget()));
-        mqttCmd = DoorState::Undefined;//prevent retriggering
+        if(sm.getTarget() == mqttCmd){
+            mqttCmd = DoorState::Undefined;//prevent retriggering
+        }
+
+        //report for debugging
+        mqttClient->sendButtonState(triggerByButton);
+        mqttClient->sendRadioState(triggerByRadio);
+        mqttClient->sendLimitSwState(limitSwitchHit);
+        mqttClient->sendRssi(WiFi.RSSI());
     }
+    delay(10);
 }

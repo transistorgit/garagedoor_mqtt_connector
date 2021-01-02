@@ -18,9 +18,9 @@ class MqttClient{
     std::string status {"Undefined"};
     std::string targetFeedback {"Undefined"};
     std::string sentStatus {"Undefined"};
-    std::string sentTargetFeedback {"Undefined"};
 
     void setupWifi();
+    void initOta();
     void reconnect();
     
 public:
@@ -28,7 +28,11 @@ public:
     void operate();
     void setStatus(std::string newStatus);
     void setTarget(std::string newTarget);
+    //for debugging
+    void sendButtonState(bool isActivated){client.publish("Toreinfahrt/Button", isActivated?"on":"off");}
+    void sendRadioState(bool isActivated){client.publish("Toreinfahrt/Radio", isActivated?"on":"off");}
+    void sendLimitSwState(bool isActivated){client.publish("Toreinfahrt/LimitSw", isActivated?"on":"off");}
+    void sendRssi(int rssi){char buf[10]; std::sprintf(buf, "%d", rssi); client.publish("Toreinfahrt/RSSI", buf);}
 };
-
 
 #endif
